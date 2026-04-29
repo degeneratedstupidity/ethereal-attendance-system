@@ -1,0 +1,282 @@
+================================================================================
+  ATTENDIFY — COLLEGE ATTENDANCE MANAGEMENT SYSTEM
+  Comprehensive Project Summary for Future Reference
+  Last Updated: 2026-04-24
+================================================================================
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. PROJECT OVERVIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A full-stack web application for managing college class attendance.
+Supports three user roles (Admin, Teacher, Student) with JWT authentication,
+role-based access control, a bunk calculator for students, avatar uploads,
+and CSV attendance exports.
+
+Location: /home/cb/AntiGravity/projects/
+  ├── attendance-management-system/   → FastAPI Python backend
+  └── attendance-frontend/            → React + TypeScript frontend
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. TECH STACK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Backend:
+  - Python 3.12
+  - FastAPI (async)
+  - SQLAlchemy 2.0 async ORM
+  - PostgreSQL + asyncpg driver
+  - Pydantic v2 for validation
+  - python-jose (JWT HS256)
+  - passlib + bcrypt (password hashing)
+  - python-multipart (avatar uploads)
+
+Frontend:
+  - React 18 + TypeScript
+  - Vite (build tool)
+  - Tailwind CSS v3
+  - react-router-dom v6
+  - lucide-react (icons)
+  - Pure-JS confetti utility (no npm package)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. RUNNING THE PROJECT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BACKEND:
+  cd /home/cb/AntiGravity/projects/attendance-management-system
+  source venv/bin/activate
+  uvicorn app.main:app --reload
+  → Runs at http://localhost:8000
+  → Swagger UI: http://localhost:8000/docs
+
+FRONTEND:
+  cd /home/cb/AntiGravity/projects/attendance-frontend
+  npm run dev
+  → Runs at http://localhost:5173
+
+DATABASE SEEDING (WIPES ALL DATA then re-seeds):
+  cd /home/cb/AntiGravity/projects/attendance-management-system
+  source venv/bin/activate
+  python seed_db.py
+  — OR —
+  /home/cb/AntiGravity/projects/attendance-management-system/venv/bin/python \
+    /home/cb/AntiGravity/projects/attendance-management-system/seed_db.py
+
+  (Use the full path if venv activation is lost between terminal sessions)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. LOGIN CREDENTIALS (all passwords: password123)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Role    │ Email                          │ Assigned Subject
+  ────────┼────────────────────────────────┼──────────────────────
+  Admin   │ admin@college.edu              │ (all courses)
+  Teacher │ alice@college.edu              │ Physics (PHYS101)
+  Teacher │ bob@college.edu                │ Mathematics (MATH101)
+  Teacher │ carol@college.edu              │ Chemistry (CHEM101)
+  Teacher │ dave@college.edu               │ Biology (BIO101)
+  Student │ student01@college.edu          │ (enrolled in random courses)
+          │   …to…                         │
+          │ student50@college.edu          │
+
+  IMPORTANT: Each teacher can ONLY see and submit attendance for their own
+  course. Admins bypass this restriction and can access all courses.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. DATABASE SCHEMA (PostgreSQL, 3NF normalized)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  departments
+    id (UUID PK), name, code
+
+  users
+    id (UUID PK), email (UNIQUE), password_hash (bcrypt)
+    first_name, last_name, role (ENUM: admin|teacher|student)
+    department_id (FK → departments), is_active
+    profile_picture_url (nullable), created_at, updated_at
+
+  courses
+    id (UUID PK), name, code (UNIQUE)
+    credit_hours, semester, year
+    department_id (FK), teacher_id (FK → users, nullable), is_active
+
+  enrollments
+    id (UUID PK), student_id (FK), course_id (FK)
+    enrolled_at
+    UNIQUE (student_id, course_id)   ← prevents double-enrollment
+
+  attendance_records
+    id (UUID PK), enrollment_id (FK)
+    attendance_date (DATE), status (ENUM: present|absent|late)
+    remarks (nullable), recorded_at, recorded_by (FK → users)
+    UNIQUE (enrollment_id, attendance_date)  ← one record per student per day
+
+  Key rule: Re-submitting attendance for the same (course, date) does an
+  UPSERT (update), not a duplicate insert. This allows corrections.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. API ENDPOINTS (all prefixed /api/v1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Authentication (public):
+    POST /auth/login              → Returns JWT + user info
+    GET  /auth/me                 → Returns current user profile (requires JWT)
+    POST /auth/change-password    → Change own password
+
+  Attendance (requires JWT):
+    GET  /courses/{id}/roster                   → Class roster for a course
+    POST /attendance/bulk                       → Submit/update attendance
+    GET  /students/{id}/attendance              → Student attendance report
+    GET  /students/{id}/bunk-calculator         → Bunk calculator result
+    GET  /students/{id}/attendance/export       → CSV download (student)
+    GET  /courses/{id}/attendance/export        → CSV download (course, by date range)
+
+  Users & Enrollment (admin only):
+    POST /users/                  → Create a user
+    POST /enrollments/            → Enroll student in course
+    GET  /courses/                → List all active courses
+    GET  /teachers/me/courses     → List teacher's own courses
+
+  Profile:
+    GET  /profile/me              → Full profile with avatar URL
+    POST /profile/avatar          → Upload profile picture (JPEG/PNG, max 5MB)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. KEY BUSINESS RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. SUBJECT CONSTRAINT: Only 4 subjects (Physics, Maths, Chemistry, Biology).
+     Each has exactly one designated teacher.
+
+  2. TEACHER ISOLATION: A teacher can only view the roster and mark attendance
+     for the course where course.teacher_id == their own user ID.
+     Admins bypass this check.
+
+  3. WEEKEND BLOCK: Attendance cannot be submitted for Saturday or Sunday.
+     The frontend shows an amber banner immediately when a weekend is selected.
+     The backend also validates and rejects weekend dates.
+
+  4. UPSERT: Re-submitting attendance for the same course + date UPDATES
+     existing records instead of creating duplicates.
+
+  5. LATE = ATTENDED: The "late" status counts as present in all percentage
+     and bunk-calculator calculations.
+
+  6. BUNK CALCULATOR THRESHOLD: 75%.
+     - If ≥ 75%: shows how many classes can safely be missed.
+     - If < 75%: shows how many consecutive classes must be attended to recover.
+     Formula (A = attended, T = total, P = 0.75):
+       safe_to_bunk = floor((A - P*T) / P)
+       must_attend  = ceil((P*T - A) / (1 - P))
+
+  7. STUDENT ISOLATION: Students can only view their own attendance data.
+     Attempting another student's ID returns HTTP 403.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. FRONTEND ARCHITECTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  src/
+  ├── api/
+  │   └── client.ts           API_BASE constant + authFetch() (auto-attaches JWT)
+  ├── context/
+  │   ├── AuthContext.tsx      login/logout, user state, localStorage persistence
+  │   └── ToastContext.tsx     Global toast notifications (success/error/warning)
+  ├── components/
+  │   ├── Sidebar.tsx          Teacher sidebar nav + cn() utility
+  │   ├── ProtectedRoute.tsx   Route guard (role-based redirect)
+  │   ├── AvatarUpload.tsx     Circular avatar with upload
+  │   ├── AttendanceEntry.tsx  Mark-attendance form (course+date picker, roster)
+  │   └── StudentReport.tsx    Attendance report viewer for teachers
+  ├── pages/
+  │   ├── LoginPage.tsx        Glassmorphism login UI + confetti on success
+  │   ├── TeacherDashboard.tsx 3-tab layout: Mark Attendance / Reports / Profile
+  │   └── StudentDashboard.tsx Bunk calculator widget + per-course breakdown
+  └── utils/
+      └── confetti.ts          Pure-JS confetti animation (no npm package needed)
+
+  Auth Flow:
+    / → RootRedirect → /login (unauthenticated)
+                     → /teacher (role: teacher or admin)
+                     → /student (role: student)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. IMPORTANT FILES TO KNOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Backend:
+    app/core/config.py          → Database URL, JWT secret, token expiry settings
+    app/core/security.py        → JWT creation/verification, get_current_user deps
+    app/models/                 → SQLAlchemy ORM models (one file per table)
+    app/schemas/attendance.py   → BulkAttendanceRequest (weekend validator here)
+    app/services/attendance_service.py → All business logic (UPSERT, bunk calc)
+    app/routers/attendance.py   → API endpoints + _require_course_access() check
+    seed_db.py                  → Full DB wipe + reseed (run with venv active!)
+
+  Frontend:
+    src/components/AttendanceEntry.tsx → Mark attendance form; date-aware pre-fill,
+                                         weekend detection, student dropdown
+    src/pages/LoginPage.tsx            → Login + confetti trigger
+    src/utils/confetti.ts              → Pure-JS confetti (replaces canvas-confetti)
+    tailwind.config.js                 → Design tokens (colors, animations)
+    src/index.css                      → Aurora background, autofill fix
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. KNOWN LIMITATIONS & FUTURE WORK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ⚠ No JWT refresh — token expires after 60 min, user must log in again.
+  ⚠ Local avatar storage — production should use S3 or cloud object storage.
+  ⚠ No Alembic migrations — schema changes are raw ALTER TABLE in seed_db.py.
+  ⚠ CORS is open (allow_origins=["*"]) — restrict to frontend domain in prod.
+  ⚠ SECRET_KEY is a placeholder — must be replaced before any real deployment.
+  ⚠ No login rate limiting — consider adding slowapi in production.
+  ⚠ Attendance pre-fill uses CSV export API — a dedicated endpoint returning
+     JSON statuses per student would be more efficient.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+11. DEVELOPMENT HISTORY (PHASES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Phase 1 — JWT Auth & RBAC
+    Created security.py, auth router, login/me/change-password endpoints.
+    Added JWT guards on all attendance endpoints. Course ownership check added.
+
+  Phase 2 — Profile Pictures
+    Added profile_picture_url column, avatar upload endpoint, static file serving.
+
+  Phase 3 — Bunk Calculator
+    Added BunkCalculatorResult schema, calculate_bunk_info() service,
+    GET /students/{id}/bunk-calculator endpoint, CSV export.
+
+  Phase 4 — Frontend Rebuild
+    Rewrote entire frontend with React Router, AuthContext, ProtectedRoute,
+    TeacherDashboard (3 tabs), StudentDashboard with bunk calculator widget,
+    AvatarUpload, Sidebar, LoginPage with glassmorphism design.
+
+  Phase 5 — Heavy Seeding
+    Rewrote seed_db.py: 3 departments, 3 teachers, 1 admin, 10 courses,
+    50 students, ~200 enrollments, 6030 attendance records.
+
+  Phase 6 — UI/UX Overhaul
+    Dark aurora theme, NES-inspired color palette, mobile responsiveness,
+    icon animations, course attendance export by date, submit button visibility fix.
+
+  Phase 7 — UX Enhancements & Bug Fixes (Latest)
+    • Reduced to 4 subjects (Physics, Maths, Chemistry, Biology)
+    • 4 teachers — one per subject; strict course isolation enforced
+    • Fixed seed_db.py: KeyError 'CS' and ValueError sample > population
+    • Replaced canvas-confetti with pure-JS confetti utility
+    • Student dropdown (select) instead of free-text search
+    • Removed email display from roster rows — names only
+    • Date-aware form pre-fill (existing attendance loads when switching date)
+    • UPSERT re-submission now works without re-marking all students
+    • Removed future-date restriction; added weekend block (Sat/Sun)
+    • Amber weekend banner with instant client-side detection
+    • Fixed [object:object] error display for Pydantic validation errors
+
+================================================================================
+  For detailed API contracts see: http://localhost:8000/docs (when server is up)
+  For full implementation log see: project_overview.txt
+================================================================================

@@ -1,0 +1,275 @@
+=== PROJECT CONTEXT & ENVIRONMENT ===
+This project is a major upgrade to the Attendance Management System.
+- Workspace Root: `/home/cb/AntiGravity/projects`
+- Backend: `/home/cb/AntiGravity/projects/attendance-management-system` (FastAPI, SQLAlchemy 2.0 async, Pydantic v2, PostgreSQL). Uses `uv` for Python package management.
+- Frontend: `/home/cb/AntiGravity/projects/attendance-frontend` (React, TailwindCSS). Uses `npm`.
+
+=== ACTIVE PROCESSES ===
+The user already has the following development servers running in the background:
+- Backend: `uvicorn app.main:app --reload` (running on port 8000)
+- Frontend: `npm run dev` (running on port 5173)
+*Note: You do not need to start these servers. They will hot-reload automatically.*
+
+=== CLAUDE CODE (AGENT) INSTRUCTIONS ===
+You are acting as an autonomous CLI agent. Please execute the plan directly without asking the user to perform manual steps.
+1. When installing Python packages (e.g. `python-multipart`), use `uv pip install <package>`.
+2. When installing npm packages (e.g. `react-router-dom`), navigate to the frontend directory and run `npm install <package>`.
+3. Feel free to use tools like `curl` or create temporary test scripts to verify your backend endpoints as you build them.
+4. If you need to check logs, keep in mind the servers are already running.
+
+=== CURRENT PROGRESS ===
+- The initial analysis of the codebase is complete.
+- A 5-phase implementation plan was created and approved by the user.
+- A task tracker was created.
+- EXECUTION HAS STARTED: Phase 1 has begun.
+- COMPLETED SO FAR: Created `app/core/security.py` which contains password hashing, JWT token generation/validation, and FastAPI dependencies (`get_current_user`, `get_current_teacher`, `get_current_admin`).
+
+=== NEXT STEPS FOR CLAUDE ===
+Please pick up where the previous model left off. 
+Continue with Phase 1:
+- Update `app/schemas/user.py` to add `LoginRequest`, `TokenResponse`, etc.
+- Create `app/routers/auth.py` for login endpoints.
+- Update `app/routers/attendance.py` and `users.py` to use the new JWT guards (`get_current_user`, etc.) and remove the hardcoded `recorded_by` query param.
+- Update `app/main.py` to register the new auth router.
+Then proceed with Phase 2, Phase 3, Phase 4, and Phase 5 according to the implementation plan and task tracker below.
+
+================================================================================
+=== FULL IMPLEMENTATION PLAN ===
+================================================================================
+# Attendance Management System — Major Upgrade Plan
+
+## Background
+The existing system is a FastAPI + React app with a PostgreSQL backend. The current state:
+- **Backend**: FastAPI, SQLAlchemy 2.0 async, Pydantic v2. Routers for `attendance` and `users`. Services for attendance logic and course/enrollment management. JWT config keys already in `settings` but **no auth endpoints exist yet**.
+- **Frontend**: React + TailwindCSS app (no router, no auth). Two views: `AttendanceEntry` (teacher marks attendance) and `StudentReport` (view report by course/student). `RECORDED_BY_ID` is hardcoded — a critical bug to fix with real auth.
+- **DB Models**: `users` (with `UserRole` enum: admin/teacher/student — already has roles!), `courses`, `departments`, `enrollments`, `attendance_records`. **No `profile_picture_url` column yet.**
+- **Dependencies**: `python-jose`, `passlib[bcrypt]`, `bcrypt` are **already in `requirements.txt`** — auth can be implemented immediately. `python-multipart` needs to be added for file uploads.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Database migration strategy**: The new columns (`profile_picture_url`) will be added via `ALTER TABLE` in the seed script for simplicity (no Alembic migration file will be created). If you need a clean Alembic migration instead, let me know before I start.
+
+> [!WARNING]
+> **Frontend router**: The current React app has no routing. I will add `react-router-dom` to handle Login → Teacher Dashboard / Student Dashboard navigation. This is a **dependency addition** to the frontend.
+
+> [!IMPORTANT]
+> **Hardcoded `RECORDED_BY_ID`**: The current `AttendanceEntry.tsx` has a hardcoded teacher UUID. After auth is added, this will be replaced with the JWT token's user ID. This is a **breaking change** to the submission flow — but it makes the system correct.
+
+> [!CAUTION]
+> **Existing attendance data**: Running the new `seed_db.py` will clear existing tables and re-seed with fresh data (50 students, 3 teachers, 10 courses). If you have real data you want to preserve, let me know.
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Static file storage for profile pictures**: I'll store uploaded images in `attendance-management-system/static/avatars/`. FastAPI will serve them at `/static/avatars/<filename>`. Is this acceptable, or do you want S3/cloud storage?
+> *(User approved local static storage for now)*
+
+> [!NOTE]
+> **`python-multipart` dependency**: File upload requires this package. I'll add it to `requirements.txt`. You'll need to run `pip install python-multipart` (or `uv pip install python-multipart`) in the backend venv.
+
+---
+
+## Proposed Changes
+
+### Phase 1 — JWT Authentication & Role-Based Access
+
+---
+
+#### [NEW] `app/core/security.py`  (✅ COMPLETED)
+New module for all auth utilities: password hashing/verification (moving from `course_service.py`), JWT token creation, and token decoding.
+
+#### [MODIFY] `app/schemas/user.py`
+Add new Pydantic schemas:
+- `LoginRequest` — `{ email, password }`
+- `TokenResponse` — `{ access_token, token_type, user_id, role, full_name }`
+- Update `UserOut` to include `profile_picture_url: str | None`
+
+#### [NEW] `app/routers/auth.py`
+New router with:
+- `POST /api/v1/auth/login` — validates credentials, returns JWT token
+- `GET /api/v1/auth/me` — returns current user info from token (protected)
+
+#### [MODIFY] `app/routers/attendance.py`
+Add JWT dependency injection (`get_current_user`) to all endpoints:
+- `GET /courses/{id}/roster` — teachers only (must own the course or be admin)
+- `POST /attendance/bulk` — teacher only; `recorded_by` is now taken from the JWT, not a query param
+- `GET /students/{id}/attendance` — student can only access their own; teacher can access any
+
+#### [MODIFY] `app/routers/users.py`
+- Protect `POST /users/` with admin-only guard
+- Add `GET /courses/` to return courses filtered by teacher (for teacher dashboard)
+
+#### [MODIFY] `app/main.py`
+- Register the new `auth` router
+- Mount `StaticFiles` at `/static` for avatar serving
+
+---
+
+### Phase 2 — Profile Pictures
+
+---
+
+#### [MODIFY] `app/models/user.py`
+Add one column: `profile_picture_url: Mapped[str | None] = mapped_column(String(500), nullable=True)`
+
+#### [NEW] `app/routers/profile.py`
+New router with:
+- `POST /api/v1/profile/avatar` — accepts `multipart/form-data`, saves file to `static/avatars/`, updates `users.profile_picture_url` in DB, returns new URL. Protected by JWT.
+- `GET /api/v1/profile/me` — returns full profile of authenticated user including avatar URL
+
+#### [MODIFY] `app/schemas/user.py`
+- Update `UserOut` to expose `profile_picture_url`
+
+---
+
+### Phase 3 — Advanced Analytics (Bunk Calculator)
+
+---
+
+#### [MODIFY] `app/schemas/attendance.py`
+Add new response schema `BunkCalculatorResult`:
+```python
+class BunkCalculatorResult(BaseModel):
+    student_id: UUID
+    student_name: str
+    overall_percentage: float
+    total_classes: int
+    attended_classes: int
+    threshold: float  # 75.0
+    status: str  # "safe" | "critical" | "recovered"
+    safe_to_bunk: int | None   # how many more they can miss and stay ≥75%
+    must_attend: int | None    # how many consecutive they must attend to reach 75%
+    message: str               # human-readable explanation
+```
+
+#### [MODIFY] `app/services/attendance_service.py`
+Add new function `calculate_bunk_info(db, student_id)`:
+```
+Given: attended A, total T, threshold P = 75%
+If current % ≥ P:
+    Find max X such that (A / (T+X)) ≥ P
+    → X = floor((A - P*T) / P)   [safe to bunk]
+If current % < P:
+    Find min N such that ((A+N) / (T+N)) ≥ P
+    → N = ceil((P*T - A) / (1 - P))  [must attend]
+```
+
+#### [MODIFY] `app/routers/attendance.py`
+Add new endpoint:
+- `GET /api/v1/students/{student_id}/bunk-calculator` — student-accessible (own only), teacher-accessible (any)
+
+---
+
+### Phase 4 — Frontend UI Rebuild
+
+---
+
+#### [NEW] `src/api/client.ts`
+Centralized API client with:
+- Base URL constant
+- `authFetch()` wrapper that auto-attaches `Authorization: Bearer <token>` header
+- Token persistence via `localStorage`
+
+#### [NEW] `src/context/AuthContext.tsx`
+React context providing:
+- `user: { id, role, full_name, email, profile_picture_url }`
+- `token: string | null`
+- `login(email, password)` async function
+- `logout()` function
+- `isAuthenticated: boolean`
+
+#### [NEW] `src/pages/LoginPage.tsx`
+Premium login UI:
+- Animated card with Attendify branding
+- Email + password form with validation
+- Error display for bad credentials
+- On success → redirects to `/teacher` or `/student` based on role
+- Gradient background, glassmorphism card
+
+#### [NEW] `src/pages/TeacherDashboard.tsx`
+Wraps the existing `AttendanceEntry` + `StudentReport` components:
+- Sidebar shows teacher's avatar (fetched from profile)
+- Nav: "Mark Attendance" | "View Reports" | "Profile"
+- `recorded_by` taken from auth context (no more hardcoded UUID)
+- New "Profile" tab with avatar upload component
+
+#### [NEW] `src/pages/StudentDashboard.tsx`
+Completely new student-facing dashboard:
+- Header: large avatar + name + email + overall % badge
+- **Bunk Calculator widget** — hero feature:
+  - If ≥75%: shows "🎉 You can safely miss X more classes!" with animated counter
+  - If <75%: shows "⚠️ Attend N consecutive classes to recover!" in red
+  - Animated circular progress ring showing current %
+- Per-course attendance breakdown (cards with progress bars)
+- Compact and beautiful card-based layout
+
+#### [MODIFY] `src/components/AttendanceEntry.tsx`
+- Remove hardcoded `RECORDED_BY_ID`
+- Read teacher ID from `AuthContext`
+- Pass `Authorization` header on all fetch calls
+
+#### [MODIFY] `src/App.tsx`
+- Wrap with `AuthProvider`
+- Add `react-router-dom` routes:
+  - `/login` → `LoginPage`
+  - `/teacher/*` → `TeacherDashboard` (protected, teacher/admin only)
+  - `/student` → `StudentDashboard` (protected, student only)
+  - `/` → redirect based on role
+
+#### [MODIFY] `src/components/Sidebar.tsx`
+- Accept `user` prop from context
+- Show avatar in bottom section
+- Add "Profile" nav item
+
+#### [NEW] `src/components/AvatarUpload.tsx`
+Profile picture upload component:
+- Circular avatar preview
+- Click to trigger file input
+- Shows upload progress
+- Calls `POST /api/v1/profile/avatar`
+
+---
+
+### Phase 5 — Heavy Seeding
+
+---
+
+#### [MODIFY] `seed_db.py`
+Completely rewritten to generate:
+- **3 Departments**: Computer Science, Mathematics, Physics
+- **3 Teachers** (one per dept), all with `password123` properly bcrypt-hashed
+- **10 Courses** (mix of departments, semesters, credit hours), assigned to teachers
+- **50 Students** spread across departments, all with `password123`
+- **Enrollments**: each student enrolled in 3-5 random courses
+- **Attendance records**: 30 past class days per course, realistic distribution (70-90% present rate, with some students critically low at 60-70% to test the bunk calculator)
+- All users get unique `student{N}@college.edu` emails
+
+
+================================================================================
+=== TASK TRACKER ===
+================================================================================
+# Implementation Task Tracker
+
+## Phase 1 — JWT Authentication & Role-Based Access
+- [x] `app/core/security.py` — JWT utilities, password hashing
+- [ ] `app/schemas/user.py` — Add LoginRequest, TokenResponse, update UserOut
+- [ ] `app/routers/auth.py` — Login + /me endpoints
+- [ ] `app/routers/attendance.py` — Add JWT guards, remove query-param recorded_by
+- [ ] `app/routers/users.py` — Protect admin routes, filter courses by teacher
+- [ ] `app/main.py` — Register auth router, mount StaticFiles
+
+## Phase 2 — Profile Pictures
+- [ ] `app/models/user.py` — Add profile_picture_url column
+- [ ] `app/routers/profile.py` — Avatar upload + profile GET endpoint
+- [ ] Add python-multipart to requirements.txt
+
+## Phase 3 — Bunk Calculator
+- [ ] `app/schemas/attendance.py` — BunkCalculatorResult schema
+- [ ] `app/services/attendance_service.py` — calculate_bunk_info()
+- [ ] `app/routers/attendance.py` — GET /students/{id}/bunk-calculator endpoint
+

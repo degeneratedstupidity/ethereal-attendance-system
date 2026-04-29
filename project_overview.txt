@@ -1,0 +1,479 @@
+# Attendify — Attendance Management System
+
+## Overview
+
+A full-stack attendance management platform for colleges, built with **FastAPI + PostgreSQL** on the backend and **React + TailwindCSS** on the frontend. The system supports three user roles (admin, teacher, student) with JWT-based authentication and a student-facing bunk calculator.
+
+---
+
+## Repository Layout
+
+```
+projects/
+├── attendance-management-system/   # FastAPI backend
+│   ├── app/
+│   │   ├── core/
+│   │   │   ├── config.py           # Pydantic settings (env vars / .env)
+│   │   │   ├── database.py         # Async SQLAlchemy engine + session
+│   │   │   └── security.py         # JWT, bcrypt, FastAPI dependencies
+│   │   ├── models/
+│   │   │   ├── user.py             # User + UserRole enum
+│   │   │   ├── course.py           # Course
+│   │   │   ├── department.py       # Department
+│   │   │   ├── enrollment.py       # Enrollment (student ↔ course junction)
+│   │   │   └── attendance.py       # AttendanceRecord + AttendanceStatus enum
+│   │   ├── schemas/
+│   │   │   ├── user.py             # UserCreate, UserOut, LoginRequest, TokenResponse, ChangePasswordRequest
+│   │   │   ├── attendance.py       # BulkAttendanceRequest/Response, StudentAttendanceReport, BunkCalculatorResult
+│   │   │   └── course.py           # CourseRosterResponse, RosterStudentEntry
+│   │   ├── routers/
+│   │   │   ├── auth.py             # POST /auth/login, GET /auth/me, POST /auth/change-password
+│   │   │   ├── attendance.py       # Roster, bulk submit, student report, bunk calculator, CSV export
+│   │   │   ├── users.py            # User creation (admin), enrollment, course listing
+│   │   │   └── profile.py          # Avatar upload, profile GET
+│   │   ├── services/
+│   │   │   ├── attendance_service.py  # Business logic for all attendance operations + bunk calculator
+│   │   │   └── course_service.py      # User creation, enrollment, course listing
+│   │   ├── exceptions.py           # Custom exception types + FastAPI handlers
+│   │   └── main.py                 # App factory, middleware, router registration, static files
+│   ├── static/
+│   │   └── avatars/                # Uploaded profile pictures (served at /static/avatars/<file>)
+│   ├── seed_db.py                  # Full database seeder (3 depts, 3 teachers, 50 students, 10 courses)
+│   ├── requirements.txt
+│   └── venv/                       # Python virtual environment (uv-managed)
+│
+└── attendance-frontend/            # React frontend
+    └── src/
+        ├── api/
+        │   └── client.ts           # API_BASE constant + authFetch() wrapper
+        ├── context/
+        │   └── AuthContext.tsx     # AuthProvider, useAuth hook, login/logout/updateUser
+        ├── components/
+        │   ├── Sidebar.tsx         # Teacher sidebar + cn() utility export
+        │   ├── ProtectedRoute.tsx  # Role-based route guard
+        │   ├── AvatarUpload.tsx    # Circular avatar preview + upload
+        │   ├── AttendanceEntry.tsx # Teacher mark-attendance form
+        │   └── StudentReport.tsx   # Teacher-facing student attendance report
+        └── pages/
+            ├── LoginPage.tsx       # Glassmorphism login UI
+            ├── TeacherDashboard.tsx# Three-tab teacher dashboard (Attendance / Reports / Profile)
+            └── StudentDashboard.tsx# Student dashboard with bunk calculator widget
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend language | Python 3.12 |
+| API framework | FastAPI |
+| ORM | SQLAlchemy 2.0 async |
+| Database | PostgreSQL (asyncpg driver) |
+| Validation | Pydantic v2 |
+| Auth | python-jose (JWT HS256) + passlib bcrypt |
+| File uploads | python-multipart |
+| Package manager | uv |
+| Frontend framework | React 18 + TypeScript |
+| Styling | TailwindCSS |
+| Routing | react-router-dom v6 |
+| Icons | lucide-react |
+| Build tool | Vite |
+
+---
+
+## Database Schema
+
+```
+departments
+  id (UUID PK)
+  name, code
+
+users
+  id (UUID PK)
+  email (UNIQUE)
+  password_hash          -- bcrypt, never plaintext
+  first_name, last_name
+  role                   -- ENUM: admin | teacher | student
+  department_id (FK → departments)
+  is_active
+  profile_picture_url    -- nullable, path like /static/avatars/<uuid>.jpg
+  created_at, updated_at
+
+courses
+  id (UUID PK)
+  name, code (UNIQUE)
+  credit_hours, semester, year
+  department_id (FK → departments)
+  teacher_id (FK → users, nullable)
+  is_active
+
+enrollments
+  id (UUID PK)
+  student_id (FK → users)
+  course_id  (FK → courses)
+  enrolled_at
+  UNIQUE (student_id, course_id)
+
+attendance_records
+  id (UUID PK)
+  enrollment_id (FK → enrollments)
+  attendance_date (DATE)
+  status          -- ENUM: present | absent | late
+  remarks         -- nullable text
+  recorded_at, recorded_by (FK → users)
+  UNIQUE (enrollment_id, attendance_date)
+```
+
+---
+
+## API Reference
+
+All routes are prefixed `/api/v1`. Protected routes require `Authorization: Bearer <JWT>`.
+
+### Authentication
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/login` | Public | Login with email + password. Returns JWT + user info. |
+| GET | `/auth/me` | Any | Returns the authenticated user's profile. |
+| POST | `/auth/change-password` | Any | Change own password (requires current password). |
+
+**Login request:**
+```json
+{ "email": "alice@college.edu", "password": "password123" }
+```
+
+**Login response:**
+```json
+{
+  "access_token": "<JWT>",
+  "token_type": "bearer",
+  "user_id": "<uuid>",
+  "role": "teacher",
+  "full_name": "Alice Johnson",
+  "email": "alice@college.edu",
+  "profile_picture_url": null
+}
+```
+
+JWT payload includes `sub` (user UUID) and `role` — both are embedded at token creation.
+
+---
+
+### Attendance
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/courses/{id}/roster` | Teacher (own course) | Returns enrolled students for a course. |
+| POST | `/attendance/bulk` | Teacher (own course) | Submit / upsert attendance for a full class. Recorder taken from JWT — no query param. |
+| GET | `/students/{id}/attendance` | Student (own) / Teacher+Admin (any) | Per-course attendance breakdown + overall %. |
+| GET | `/students/{id}/bunk-calculator` | Student (own) / Teacher+Admin (any) | Bunk calculator result. |
+| GET | `/students/{id}/attendance/export` | Student (own) / Teacher+Admin (any) | Download attendance as CSV. |
+
+**Course ownership rule:** Teachers can only access the roster and submit attendance for courses where `course.teacher_id == current_user.id`. Admins bypass this check.
+
+**Bulk attendance request:**
+```json
+{
+  "course_id": "<uuid>",
+  "attendance_date": "2025-04-24",
+  "records": [
+    { "student_id": "<uuid>", "status": "present" },
+    { "student_id": "<uuid>", "status": "absent", "remarks": "medical" }
+  ]
+}
+```
+
+**Bunk calculator response:**
+```json
+{
+  "student_id": "<uuid>",
+  "student_name": "Aiden Adams",
+  "overall_percentage": 87.78,
+  "total_classes": 90,
+  "attended_classes": 79,
+  "threshold": 75.0,
+  "status": "safe",
+  "safe_to_bunk": 15,
+  "must_attend": null,
+  "message": "You're at 87.8% — safe! You can miss up to 15 more classes and still stay above 75%."
+}
+```
+
+**Bunk calculator formulas** (threshold P = 0.75, attended A, total T):
+- If `A/T ≥ P`: `safe_to_bunk = floor((A − P·T) / P)`
+- If `A/T < P`: `must_attend = ceil((P·T − A) / (1 − P))`
+
+---
+
+### Users & Enrollment
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/users/` | Admin only | Create a new user (any role). Password hashed server-side. |
+| POST | `/enrollments/` | Admin only | Enroll a student in a course. |
+| GET | `/courses/` | Teacher / Admin | List all active courses. |
+| GET | `/teachers/me/courses` | Teacher / Admin | List courses taught by the authenticated teacher. |
+
+---
+
+### Profile & Avatars
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/profile/me` | Any | Full profile of current user including avatar URL. |
+| POST | `/profile/avatar` | Any | Upload profile picture (JPEG/PNG/GIF/WebP, max 5 MB). |
+
+Uploaded avatars are saved to `static/avatars/<user_id>.<ext>` and served at `/static/avatars/<file>`. The full URL to prepend is `http://127.0.0.1:8000`.
+
+---
+
+## Security Design
+
+- **JWT:** HS256, signed with `SECRET_KEY` from settings. Expires in 60 minutes (configurable via `ACCESS_TOKEN_EXPIRE_MINUTES`). Payload contains `sub` (user UUID) and `role`.
+- **Passwords:** bcrypt via passlib. Plain text is never stored or logged.
+- **Role guards (FastAPI dependencies):**
+  - `get_current_user` — any authenticated user
+  - `get_current_teacher` — role must be `teacher` or `admin`
+  - `get_current_admin` — role must be `admin`
+- **Course ownership check:** On roster fetch and bulk attendance submit, the service verifies `course.teacher_id == current_user.id` (admins bypass).
+- **Student data isolation:** Students can only query their own attendance and bunk calculator; attempting another student's ID returns 403.
+
+---
+
+## Frontend Architecture
+
+### Auth flow
+
+1. User visits `/` → `RootRedirect` checks `AuthContext` → redirects to `/login` if not authenticated.
+2. `LoginPage` calls `POST /auth/login`, stores `token` + `user` in `localStorage` and React state.
+3. On reload, `AuthContext` hydrates from `localStorage` automatically.
+4. `ProtectedRoute` wraps each dashboard and enforces both authentication and role. Wrong role redirects to the correct dashboard.
+5. `authFetch(path, options)` in `src/api/client.ts` auto-attaches the Bearer token to every request. It skips `Content-Type: application/json` when the body is `FormData` (for avatar upload).
+
+### Routing
+
+```
+/login          → LoginPage (public)
+/teacher/*      → TeacherDashboard (requires role: teacher | admin)
+/student        → StudentDashboard (requires role: student)
+/               → RootRedirect (to /login, /teacher, or /student based on auth state)
+*               → redirects to /
+```
+
+### Teacher Dashboard tabs
+
+- **Mark Attendance** — course picker (own courses only via `/teachers/me/courses`), date picker, student roster, status buttons (Present / Absent / Late), "Mark All Present" one-click button, submit.
+- **View Reports** — pick course → pick student → view attendance breakdown with progress bars + CSV export button.
+- **My Profile** — avatar upload (click circle to open file picker), change password form.
+
+### Student Dashboard
+
+- Header: avatar, full name, email, overall % badge.
+- **Bunk Calculator widget** (hero): animated SVG circular progress ring showing current %, large number showing classes safe to skip or classes to attend to recover, attendance stats (attended / missed / total).
+- Per-course breakdown: progress bars colored green/amber/red, P/L/A counts, below-75% warning badge.
+- Top bar: Export CSV button, Sign Out.
+
+### Key frontend files
+
+| File | Purpose |
+|---|---|
+| `src/api/client.ts` | `API_BASE` constant, `authFetch()` — Bearer token auto-attach |
+| `src/context/AuthContext.tsx` | `AuthProvider`, `useAuth()`, `login()`, `logout()`, `updateUser()` |
+| `src/components/Sidebar.tsx` | Teacher sidebar nav + `cn()` className utility (imported by other components) |
+| `src/components/ProtectedRoute.tsx` | Route guard: redirects unauthenticated users and wrong-role users |
+| `src/components/AvatarUpload.tsx` | Circular avatar with hover overlay, file input, upload progress |
+
+---
+
+## Running the Project
+
+### Backend
+
+```bash
+cd attendance-management-system
+source venv/bin/activate
+uvicorn app.main:app --reload   # http://localhost:8000
+# Swagger UI: http://localhost:8000/docs
+```
+
+Install dependencies (if needed):
+```bash
+uv pip install -r requirements.txt
+```
+
+### Frontend
+
+```bash
+cd attendance-frontend
+npm install
+npm run dev   # http://localhost:5173
+```
+
+### Seeding the database
+
+```bash
+cd attendance-management-system
+source venv/bin/activate
+python seed_db.py
+```
+
+This will **wipe all existing data** and re-seed with:
+- 3 departments, 3 teachers, 1 admin, 10 courses, 50 students
+- 201 enrollments, 6030 attendance records (30 past weekdays per enrollment)
+- ~30% of students seeded in the critical (<75%) attendance zone to exercise the bunk calculator
+
+### Environment variables
+
+Configured via `.env` in the backend root or actual environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://postgres:password@localhost:5432/attendance_db` | Async PostgreSQL connection string |
+| `SECRET_KEY` | `change-me-in-production` | JWT signing key — **change in production** |
+| `ALGORITHM` | `HS256` | JWT algorithm |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime |
+
+---
+
+## Test Credentials
+
+All seeded accounts use the password: **`password123`**
+
+| Role | Email |
+|---|---|
+| Admin | `admin@college.edu` |
+| Teacher | `alice@college.edu` (PHYS) |
+| Teacher | `bob@college.edu` (MATH) |
+| Teacher | `carol@college.edu` (CHEM) |
+| Teacher | `dave@college.edu` (BIO) |
+| Student | `student01@college.edu` … `student50@college.edu` |
+
+Students with critically low attendance (for testing bunk calculator "must attend" path): roughly students 06, 14, 22, 30, 38, 45 — varies per seed run due to random generation. Check with:
+```bash
+# Find critical students
+curl -s -H "Authorization: Bearer <admin_token>" \
+  http://localhost:8000/api/v1/students/<id>/bunk-calculator
+```
+
+---
+
+## Implementation Phases
+
+### Phase 1 — JWT Authentication & Role-Based Access
+
+- Created `app/core/security.py`: password hashing, JWT creation/decoding, `get_current_user` / `get_current_teacher` / `get_current_admin` FastAPI dependencies.
+- Created `app/routers/auth.py`: login, /me, change-password endpoints.
+- Updated `app/schemas/user.py`: added `LoginRequest`, `TokenResponse`, `ChangePasswordRequest`; updated `UserOut` with `profile_picture_url`.
+- Updated `app/routers/attendance.py`: JWT guards on all endpoints, course ownership check (`_require_course_access`), removed `recorded_by` query param (now from JWT).
+- Updated `app/routers/users.py`: admin guard on user creation and enrollment, added `GET /teachers/me/courses`.
+- Updated `app/main.py`: registered auth and profile routers, mounted `StaticFiles` at `/static`.
+
+### Phase 2 — Profile Pictures
+
+- Added `profile_picture_url: Mapped[str | None]` column to `app/models/user.py`.
+- Created `app/routers/profile.py`: avatar upload (multipart, MIME-validated, 5 MB max, saved to `static/avatars/`) and profile GET.
+- `seed_db.py` handles `ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_picture_url` for live databases.
+
+### Phase 3 — Bunk Calculator
+
+- Added `BunkCalculatorResult` schema to `app/schemas/attendance.py`.
+- Added `calculate_bunk_info()` to `app/services/attendance_service.py` with the two formulas.
+- Added `GET /students/{id}/bunk-calculator` and `GET /students/{id}/attendance/export` (CSV) to `app/routers/attendance.py`.
+
+### Phase 4 — Frontend Rebuild
+
+- Installed `react-router-dom`.
+- Created `src/api/client.ts`: `authFetch()` wrapper.
+- Created `src/context/AuthContext.tsx`: auth state, login/logout, localStorage persistence.
+- Rewrote `src/components/Sidebar.tsx`: auth-aware sidebar with user avatar/name footer; exports `cn()` utility.
+- Created `src/components/ProtectedRoute.tsx`: redirects unauthenticated/wrong-role users.
+- Created `src/components/AvatarUpload.tsx`: circular avatar with hover camera icon, file upload.
+- Created `src/pages/LoginPage.tsx`: glassmorphism card, gradient background, role-based redirect.
+- Created `src/pages/TeacherDashboard.tsx`: three-tab layout (Mark Attendance / View Reports / My Profile).
+- Created `src/pages/StudentDashboard.tsx`: bunk calculator widget with SVG circular progress ring, per-course breakdown.
+- Updated `src/components/AttendanceEntry.tsx`: removed `RECORDED_BY_ID`, uses `authFetch`, fetches teacher's own courses, added "Mark All Present" button.
+- Updated `src/components/StudentReport.tsx`: uses `authFetch`, fetches teacher's own courses, added CSV export button.
+- Updated `src/App.tsx`: `BrowserRouter` + `AuthProvider` + typed routes with `ProtectedRoute`.
+
+### Phase 5 — Heavy Seeding
+
+- Rewrote `seed_db.py`: wipes all tables in FK-safe order, runs `ALTER TABLE` for the new column, seeds 3 departments / 3 teachers / 1 admin / 10 courses / 50 students / ~200 enrollments / 6030 attendance records with realistic attendance distributions.
+
+---
+
+## Known Limitations & Future Work
+
+- **No token refresh:** JWT expires after 60 minutes and the user must log in again. A refresh token flow (httpOnly cookie + `/auth/refresh` endpoint) would fix this.
+- **Local file storage:** Avatars are stored on disk. For production, replace with S3 or similar object storage.
+- **No Alembic migrations:** Schema changes are handled via `ALTER TABLE` in the seed script and `create_all` on startup. Add Alembic for production use.
+- **CORS is open:** `allow_origins=["*"]` is set for development. Restrict to the frontend origin in production.
+- **SECRET_KEY is a placeholder:** Must be replaced with a strong random value before any real deployment.
+- **No rate limiting on login:** The `/auth/login` endpoint has no brute-force protection. Consider adding `slowapi` or a similar rate limiter.
+
+
+### Phase 6 — UI/UX Overhaul & Advanced Reports
+- Rebranded app to suupyTulip University with NES color palette.
+- Added mobile responsiveness and icon animations.
+- Added course attendance export by date for teachers.
+- Showed assigned teachers to students in Student Dashboard.
+- Extended Teacher Dashboard to Admin role to view all courses.
+- Fixed submit button visibility issue.
+
+---
+
+### Phase 7 — UX Enhancements, Bug Fixes & Data Constraints
+
+#### Backend Changes
+
+- **4-Subject Constraint (`seed_db.py`):** Rewrote the seeder to enforce exactly 4 departments and courses:
+  - Physics (PHYS101) → Teacher: `alice@college.edu`
+  - Mathematics (MATH101) → Teacher: `bob@college.edu`
+  - Organic Chemistry (CHEM101) → Teacher: `carol@college.edu`
+  - General Biology (BIO101) → Teacher: `dave@college.edu`
+  - Fixed `KeyError: 'CS'` (admin was assigned to a removed department).
+  - Fixed `ValueError: Sample larger than population` (students were being enrolled in more courses than existed).
+
+- **Weekend Validation (`app/schemas/attendance.py`):**
+  - Removed the future-date restriction entirely — teachers can now mark attendance for any date.
+  - Added a weekend validator: attendance on Saturday or Sunday is rejected with a clear error message.
+
+- **Better Error Messages:** Fixed `[object Object]` error display — FastAPI Pydantic validation errors return `detail` as a list of objects; the frontend now correctly extracts the `.msg` field from each entry.
+
+#### Frontend Changes (`attendance-frontend/src/`)
+
+- **Confetti (`src/utils/confetti.ts`):**
+  - Replaced the external `canvas-confetti` npm package (which was never installed) with a zero-dependency pure-JS/CSS confetti implementation.
+  - Confetti fires on successful login (`LoginPage.tsx`) and on successful attendance submission (`AttendanceEntry.tsx`).
+
+- **Student Dropdown (`AttendanceEntry.tsx`):**
+  - Replaced the free-text search input with a `<select>` dropdown listing all enrolled students by name.
+  - Student roster rows show only First + Last Name (email removed).
+
+- **Date-Aware Attendance Pre-fill (`AttendanceEntry.tsx`):**
+  - Combined the two separate `useEffect` hooks (course change + date change) into one that fires on both.
+  - When switching course or date, the component now calls the course attendance CSV export for that specific date and pre-populates the form with any already-submitted statuses.
+  - This means submitting attendance for the same date a second time works without re-marking everyone.
+
+- **Weekend Banner (`AttendanceEntry.tsx`):**
+  - When Saturday or Sunday is selected in the date picker, an amber warning banner appears instantly: *"It's Saturday/Sunday — no classes today! Attendance cannot be marked on weekends."*
+  - The Submit button is disabled on weekends.
+  - Date parsing uses the local-time constructor (`new Date(yyyy, mm-1, dd)`) to avoid UTC off-by-one timezone bugs.
+
+---
+
+## Test Credentials (Post Phase 7 Seed)
+
+All seeded accounts use the password: **`password123`**
+
+| Role | Email | Subject |
+|---|---|---|
+| Admin | `admin@college.edu` | — |
+| Teacher | `alice@college.edu` | Physics (PHYS101) |
+| Teacher | `bob@college.edu` | Mathematics (MATH101) |
+| Teacher | `carol@college.edu` | Chemistry (CHEM101) |
+| Teacher | `dave@college.edu` | Biology (BIO101) |
+| Student | `student01@college.edu` … `student50@college.edu` | — |
+
+> **Note:** Each teacher can only access their own designated course. Admins bypass all course ownership checks.

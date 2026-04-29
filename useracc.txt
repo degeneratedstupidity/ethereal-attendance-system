@@ -1,0 +1,15 @@
+User Accounts & Passwords
+=========================
+Password for all accounts: password123
+
+Admin:
+- admin@college.edu
+
+Teachers:
+- alice@college.edu (Physics)
+- bob@college.edu (Mathematics)
+- carol@college.edu (Chemistry)
+- dave@college.edu (Biology)
+
+Students:
+- student01@college.edu ... student50@college.edu

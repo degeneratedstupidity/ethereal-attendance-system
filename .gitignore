@@ -1,0 +1,15 @@
+# Node
+attendance-frontend/node_modules/
+attendance-frontend/dist/
+
+# Python
+attendance-management-system/venv/
+attendance-management-system/__pycache__/
+*.pyc
+
+# Environment variables (Crucial!)
+.env
+attendance-management-system/.env
+
+# OS generated files
+.DS_Store
