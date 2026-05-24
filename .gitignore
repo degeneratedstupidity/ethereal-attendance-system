@@ -5,11 +5,30 @@ attendance-frontend/dist/
 # Python
 attendance-management-system/venv/
 attendance-management-system/__pycache__/
+**/__pycache__/
 *.pyc
+.venv/
 
-# Environment variables (Crucial!)
+# Environment variables
 .env
 attendance-management-system/.env
 
 # OS generated files
 .DS_Store
+Thumbs.db
+
+# Internal / session files — not part of the deployable project
+handoff_summary_for_claude.txt
+verification_report.md
+replace_colors.py
+project_overview.txt
+implementation_plan.md
+PROJECT_OVERVIEW.md
+PROJECT_SUMMARY.txt
+*.webp
+*.png
+*.jpg
+*.jpeg
+
+# pytest cache
+attendance-management-system/.pytest_cache/
