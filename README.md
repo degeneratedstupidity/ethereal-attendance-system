@@ -1,160 +1,195 @@
 # Ethereal Attendance System
 
-A full-stack college attendance management platform with JWT authentication, role-based dashboards, and a student bunk calculator.
+A web app for colleges to track student attendance. Teachers can mark who showed up, students can see their attendance percentage and figure out how many more classes they can skip (or must attend), and admins get a full overview of everything.
 
-**Stack:** FastAPI · PostgreSQL · React 18 · TypeScript · TailwindCSS · Docker
+**Live demo accounts are included — no signup needed.**
 
 ---
 
-## Features
+## What it does
 
-| Role | Capabilities |
+| Who | What they can do |
 |---|---|
-| **Admin** | View all courses and student reports across the system |
-| **Teacher** | Take attendance, export date-range CSV reports per course |
-| **Student** | View attendance per course, bunk calculator (safe vs. critical) |
-
-- JWT-based authentication with role-based access control
-- Bulk attendance submission with upsert (re-submitting a day updates, not duplicates)
-- Per-student attendance report with present/absent/late breakdown and percentage
-- Date-range CSV export for course attendance
-- Avatar upload and profile management
-- 3NF PostgreSQL schema with async SQLAlchemy 2.0
+| **Admin** | See all courses and every student's attendance across the college |
+| **Teacher** | Mark attendance for their classes, download attendance reports as Excel-friendly CSV files |
+| **Student** | Check their own attendance per course, use the bunk calculator to see if they're safe or at risk |
 
 ---
 
-## Quickstart with Docker
+## Run it on your computer (Docker — recommended)
 
-> Requires [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/).
+This is the easiest way. Docker bundles everything the app needs so you don't have to install Python, PostgreSQL, or Node.js separately.
 
-### 1. Clone the repo
+### Step 1 — Install Docker Desktop
+
+Download and install it from the official site:
+- **Windows / Mac:** https://www.docker.com/products/docker-desktop/
+- **Linux:** https://docs.docker.com/engine/install/
+
+Once installed, open Docker Desktop and make sure it's running (you'll see the whale icon in your taskbar/menu bar).
+
+---
+
+### Step 2 — Download this project
+
+Open a terminal (Command Prompt on Windows, Terminal on Mac/Linux) and run:
 
 ```bash
-git clone <your-repo-url>
-cd projects
+git clone https://github.com/degeneratedstupidity/ethereal-attendance-system.git
+cd ethereal-attendance-system
 ```
 
-### 2. Start all services
+> Don't have Git? Download it from https://git-scm.com/downloads, then retry the commands above.
+
+---
+
+### Step 3 — Start the app
 
 ```bash
 docker compose up --build
 ```
 
-This starts three containers:
-- `db` — PostgreSQL 15 on port `5432`
-- `backend` — FastAPI on port `8000`
-- `frontend` — React (nginx) on port `80`
+This will download everything needed and start the app. It takes **2–5 minutes the first time**. You'll know it's ready when you see lines like:
 
-> **First-run note:** If the backend exits immediately on first boot, Postgres may not have finished initializing. Run `docker compose up` again — it will succeed on the second attempt.
+```
+✅ Database tables verified/created.
+🚀 Starting Attendance Management System
+```
 
-### 3. Seed demo data
+> If you see an error about the database not being ready, just run `docker compose up` again (without `--build`) — it fixes itself on the second run.
 
-In a second terminal, run the seed script to populate the database with realistic demo data (50 students, 10 courses, 30 days of attendance history):
+---
+
+### Step 4 — Load the demo data
+
+Open a **new terminal window** (keep the first one running) and run:
 
 ```bash
+cd ethereal-attendance-system
 docker compose exec backend python seed_db.py
 ```
 
-### 4. Open the app
+This fills the database with 50 fake students, 10 courses, and 30 days of attendance history so you have something to explore.
+
+---
+
+### Step 5 — Open the app
+
+Go to this address in your browser:
 
 ```
 http://localhost
 ```
 
+That's it. The app is running.
+
 ---
 
-## Demo Accounts
+## Login with demo accounts
 
-All demo accounts use the password: **`password123`**
+All accounts use the same password: **`password123`**
 
-| Role | Email |
+| Account type | Email to use |
 |---|---|
 | Admin | `admin@college.edu` |
 | Teacher (Physics) | `alice@college.edu` |
-| Teacher (Mathematics) | `bob@college.edu` |
+| Teacher (Maths) | `bob@college.edu` |
 | Teacher (Chemistry) | `carol@college.edu` |
-| Student | `student01@college.edu` … `student50@college.edu` |
+| Student | `student01@college.edu` (or student02, student03 … up to student50) |
 
 ---
 
-## API Documentation
+## Stopping the app
 
-The FastAPI backend auto-generates interactive API docs:
+Press `Ctrl + C` in the terminal where the app is running, then:
 
-| URL | Interface |
+```bash
+docker compose down
+```
+
+To start it again later (without rebuilding everything from scratch):
+
+```bash
+docker compose up
+```
+
+---
+
+## Explore the API (for developers)
+
+The backend exposes fully documented API endpoints that you can test directly in the browser:
+
+- **http://localhost:8000/docs** — Interactive API explorer (Swagger UI)
+- **http://localhost:8000/redoc** — Alternate API reference
+
+---
+
+## Tech stack
+
+| Layer | Technology |
 |---|---|
-| `http://localhost:8000/docs` | Swagger UI |
-| `http://localhost:8000/redoc` | ReDoc |
+| Backend | Python · FastAPI · SQLAlchemy 2.0 (async) |
+| Database | PostgreSQL 15 (3NF schema) |
+| Auth | JWT (HS256) · bcrypt password hashing |
+| Frontend | React 18 · TypeScript · TailwindCSS · Vite |
+| Infrastructure | Docker · Docker Compose · Nginx |
 
 ---
 
-## Project Structure
+## Project layout
 
 ```
-projects/
+ethereal-attendance-system/
 ├── docker-compose.yml
-├── attendance-management-system/     # FastAPI backend
+├── attendance-management-system/   ← Python / FastAPI backend
 │   ├── app/
-│   │   ├── main.py                   # App entrypoint, lifespan, middleware
-│   │   ├── core/
-│   │   │   ├── config.py             # Pydantic Settings (env vars)
-│   │   │   ├── database.py           # Async engine + session factory
-│   │   │   └── security.py           # JWT creation/decoding, auth dependencies
-│   │   ├── models/                   # SQLAlchemy 2.0 ORM models
-│   │   ├── schemas/                  # Pydantic v2 request/response models
-│   │   ├── services/                 # Business logic layer
-│   │   └── routers/                  # API route handlers
-│   ├── sql/schema.sql                # Raw PostgreSQL DDL
-│   ├── seed_db.py                    # Demo data seeder
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── Dockerfile
-└── attendance-frontend/              # React + TypeScript frontend
+│   │   ├── core/        (config, database, JWT security)
+│   │   ├── models/      (SQLAlchemy ORM models)
+│   │   ├── schemas/     (Pydantic request/response shapes)
+│   │   ├── services/    (business logic)
+│   │   └── routers/     (API endpoints)
+│   ├── sql/schema.sql   (raw PostgreSQL schema)
+│   ├── seed_db.py       (demo data loader)
+│   └── requirements.txt
+└── attendance-frontend/            ← React / TypeScript frontend
     ├── src/
-    │   ├── api/client.ts             # Fetch wrapper with JWT injection
-    │   ├── context/AuthContext.tsx   # Global auth state
-    │   ├── pages/                    # LoginPage, TeacherDashboard, StudentDashboard
-    │   └── components/               # AttendanceEntry, StudentReport, CourseExport, …
-    ├── nginx.conf
-    ├── vite.config.ts
-    └── Dockerfile
+    │   ├── pages/       (Login, TeacherDashboard, StudentDashboard)
+    │   └── components/  (AttendanceEntry, StudentReport, CourseExport …)
+    └── nginx.conf
 ```
 
 ---
 
-## Running Locally Without Docker
+## Running without Docker (manual setup)
 
-### Backend
+Only follow this if you prefer not to use Docker and are comfortable with the terminal.
 
-**Requirements:** Python 3.11+, PostgreSQL 14+
+**You'll need:** Python 3.11+, Node.js 18+, and PostgreSQL installed.
+
+**Backend:**
 
 ```bash
 cd attendance-management-system
-
-# Create and activate virtual environment
 python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Configure environment
 cp .env.example .env
-# Edit .env — set DATABASE_URL to your local Postgres instance
+# Open .env and update DATABASE_URL with your PostgreSQL credentials
 
-# Create the database
 psql -U postgres -c "CREATE DATABASE attendance_db;"
-
-# Start the server (auto-creates tables on startup)
 uvicorn app.main:app --reload --port 8000
+```
 
-# Seed demo data (optional, in a second terminal)
+In a new terminal, load the demo data:
+
+```bash
+cd attendance-management-system
+source venv/bin/activate
 python seed_db.py
 ```
 
-### Frontend
-
-**Requirements:** Node.js 18+
+**Frontend:**
 
 ```bash
 cd attendance-frontend
@@ -162,35 +197,7 @@ npm install
 npm run dev
 ```
 
-The dev server starts at `http://localhost:5173`. It calls the backend at `http://localhost:8000`.
-
----
-
-## Environment Variables
-
-Copy `attendance-management-system/.env.example` to `.env` and adjust:
-
-| Variable | Default (dev) | Description |
-|---|---|---|
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:password@db:5432/attendance_db` | Async PostgreSQL connection string |
-| `SECRET_KEY` | `change-me-in-production` | JWT signing secret — **change this in any real deployment** |
-| `ALGORITHM` | `HS256` | JWT algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime |
-| `DEBUG` | `True` | FastAPI debug mode |
-
----
-
-## Database Schema (3NF)
-
-| Table | Purpose |
-|---|---|
-| `departments` | College departments |
-| `users` | All users: admin, teacher, student |
-| `courses` | Course offerings per semester |
-| `enrollments` | Junction: student ↔ course (prevents duplicates) |
-| `attendance_records` | One row per student per class date |
-
-Key constraints: unique enrollment per student/course, unique attendance per enrollment/date, cascade deletes, bcrypt-hashed passwords.
+Open `http://localhost:5173` in your browser.
 
 ---
 
